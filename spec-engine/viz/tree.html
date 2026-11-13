@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>spec-engine · 生长树</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cellipse cx='16' cy='27' rx='5' ry='3' fill='%238a5a3b'/%3E%3Cpath d='M16 26 V13' stroke='%233e6b2f' stroke-width='3'/%3E%3Cellipse cx='10' cy='12' rx='6' ry='3.4' fill='%236aa84f' transform='rotate(-24 10 12)'/%3E%3Cellipse cx='22' cy='12' rx='6' ry='3.4' fill='%236aa84f' transform='rotate(24 22 12)'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#eef2e6; --ink:#26301f; --muted:#6b7260; --line:#dde3cf;
+    --green:#3e6b2f; --foliage:#6aa84f; --amber:#b97f24; --brick:#a44a3a;
+    --mono:"Cascadia Code","Consolas",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+    background:var(--bg);color:var(--ink);font-size:14px;line-height:1.65}
+  header{padding:20px 28px 14px;border-bottom:1px solid var(--line)}
+  header .title{font-size:19px;font-weight:600;letter-spacing:.5px}
+  header .subtitle{font-size:13px;color:var(--muted);margin-top:4px}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;
+    padding:18px 28px;max-width:1240px;margin:0 auto}
+  @media (max-width:980px){main{grid-template-columns:1fr}}
+
+  .scene-card{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .scene-frame{position:relative;transition:box-shadow .3s}
+  .scene-frame.blocked{box-shadow:inset 0 0 0 3px #d9a94e}
+  .scene-frame svg{display:block;width:100%;height:auto}
+  .scene-frame svg.grayed{filter:grayscale(.92) opacity(.85);transition:filter .5s}
+  .stage-badge{position:absolute;top:12px;left:12px;background:#ffffffcc;
+    border:1px solid var(--line);border-radius:999px;padding:5px 13px;
+    font-size:12.5px;color:var(--ink);backdrop-filter:blur(2px)}
+  .abort-veil{position:absolute;inset:0;display:none;place-items:center;text-align:center}
+  .abort-veil.show{display:grid}
+  .abort-veil .word{font-size:20px;letter-spacing:14px;color:#7d7566;text-indent:14px}
+  .abort-veil .sub{font-size:12px;color:#9b9384;margin-top:6px}
+
+  .caption{padding:14px 20px 16px;border-top:1px dashed var(--line)}
+  .caption .stage-title{font-size:15px;font-weight:700;color:var(--green)}
+  .caption .stage-text{font-size:13px;color:#4a4638;margin-top:5px}
+  .caption .gate-hint{font-size:12px;color:var(--muted);margin-top:6px}
+
+  .panel{display:flex;flex-direction:column;gap:12px}
+  .block{background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px 15px}
+  .block-title{font-size:12px;color:var(--muted);margin-bottom:9px}
+  .controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  button{border:none;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;
+    color:#fff;transition:filter .15s,opacity .15s;font-family:inherit}
+  button:hover:not(:disabled){filter:brightness(1.12)}
+  button:disabled{background:#c3c7ba;cursor:not-allowed}
+  .b-pass{background:var(--green)} .b-fail{background:var(--amber)}
+  .b-back{background:#7d8471} .b-abort{background:var(--brick)} .b-reset{background:#8b8577}
+  .io{background:#5a6350}
+  select{padding:7px 9px;border:1px solid var(--line);border-radius:8px;font-size:13px;
+    font-family:inherit;background:#fff;color:var(--ink)}
+  select:disabled{color:#a9ad9f}
+  .io-row{display:flex;gap:8px;width:100%;margin-top:4px}
+  .io-row button{flex:1}
+
+  .reasons{display:none;background:#fbf3e4;border:1px solid #e5cfa0;border-radius:10px;
+    padding:11px 14px;font-size:12.5px}
+  .reasons.show{display:block}
+  .reasons .r-title{color:var(--amber);font-weight:600;margin-bottom:6px}
+  .reasons.info{background:#eef4e6;border-color:#cfdcb4}
+  .reasons.info .r-title{color:var(--green)}
+  .reasons ul{margin:0;padding:0;list-style:none}
+  .reasons li{margin:4px 0;color:#6b5735}
+  .reasons.info li{color:#41522f}
+  .reasons code{font-family:var(--mono);font-size:11.5px;background:#ffffffaa;
+    border:1px solid #e0d2ae;border-radius:4px;padding:1px 6px;margin-right:6px}
+
+  .tl-row{display:flex;gap:8px;font-family:var(--mono);font-size:12px;
+    padding:4px 0;border-bottom:1px dashed #eceadb;align-items:baseline}
+  .tl-row:last-child{border-bottom:none}
+  .tl-i{color:#a9ad9f} .tl-stage{color:var(--ink)}
+  .tl-mark{font-weight:700}
+  .tl-mark.ok{color:var(--green)} .tl-mark.bad{color:var(--brick)} .tl-mark.live{color:var(--amber)}
+  .tl-t{margin-left:auto;color:#a9ad9f}
+  #timeline{max-height:180px;overflow:auto}
+
+  pre#stateJson{background:#2c3126;color:#d8e3c8;border-radius:8px;padding:12px;
+    font-family:var(--mono);font-size:11.5px;line-height:1.55;overflow:auto;
+    max-height:300px;margin:0}
+
+  footer{max-width:1240px;margin:6px auto 0;padding:4px 28px 30px;
+    font-size:12px;color:var(--muted)}
+  footer .f-line{margin-top:4px}
+
+  /* ---- SVG 场景动画 ---- */
+  .scene{opacity:0;transition:opacity .55s ease;pointer-events:none}
+  .scene.active{opacity:1}
+  @keyframes pulse{0%,100%{opacity:.72;transform:scale(1)}50%{opacity:1;transform:scale(1.07)}}
+  .pulse{animation:pulse 2.4s ease-in-out infinite;transform-box:fill-box;transform-origin:center}
+  @keyframes sway{0%,100%{transform:rotate(-1deg)}50%{transform:rotate(1.2deg)}}
+  .sway{animation:sway 6.5s ease-in-out infinite;transform-origin:320px 388px}
+  @keyframes drift{from{transform:translateX(-12px)}to{transform:translateX(14px)}}
+  .cloud{animation:drift 10s ease-in-out infinite alternate}
+  @keyframes fall{0%{transform:translateY(0);opacity:0}18%{opacity:.9}
+    80%{opacity:.8}100%{transform:translateY(36px);opacity:0}}
+  .drop{animation:fall 2.4s linear infinite}
+  @media (prefers-reduced-motion:reduce){
+    .pulse,.sway,.cloud,.drop{animation:none}
+  }
+</style>
+</head>
+
+<body>
+
+<header>
+  <div class="title">spec-engine · 生长树</div>
+  <div class="subtitle">六阶段流水线的体现层原型 —— 门禁通过即生长；本页直接消费 state.json，可导入真实运行产物回放</div>
+</header>
+
+<main>
+  <section class="scene-card">
+    <div class="scene-frame" id="sceneFrame">
+      <div class="stage-badge" id="stageBadge"></div>
+      <div class="abort-veil" id="abortVeil">
+        <div><div class="word">休眠</div><div class="sub">树还在，检查点一个不丢 —— 回退到任意前序阶段即可恢复</div></div>
+      </div>
+      <svg id="treeScene" viewBox="0 0 640 500" role="img" aria-label="生长树阶段示意图">
+        <defs>
+          <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#cfe9f7"/><stop offset="1" stop-color="#eef7ee"/>
+          </linearGradient>
+          <linearGradient id="soilGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#a5764f"/><stop offset="1" stop-color="#5f3f28"/>
+          </linearGradient>
+        </defs>
+        <rect x="0" y="0" width="640" height="386" fill="url(#skyGrad)"/>
+        <circle cx="534" cy="84" r="46" fill="#ffe9a8" opacity=".45"/>
+        <circle cx="534" cy="84" r="28" fill="#ffd97a"/>
+        <g class="cloud" fill="#ffffff" opacity=".9">
+          <ellipse cx="150" cy="92" rx="36" ry="13"/><ellipse cx="176" cy="86" rx="28" ry="11"/>
+          <ellipse cx="198" cy="95" rx="24" ry="10"/>
+        </g>
+        <g class="cloud" style="animation-delay:-5s" fill="#ffffff" opacity=".85">
+          <ellipse cx="430" cy="66" rx="30" ry="11"/><ellipse cx="452" cy="61" rx="22" ry="9"/>
+        </g>
+        <rect x="0" y="386" width="640" height="114" fill="url(#soilGrad)"/>
+        <rect x="0" y="382" width="640" height="10" fill="#7fae5e"/>
+        <rect x="0" y="386" width="640" height="2" fill="#6d8f52" opacity=".6"/>
+        <ellipse cx="320" cy="390" rx="68" ry="7" fill="#000" opacity=".1"/>
+
+        <!-- 场景：elicit 种子吸水（提问即浇水） -->
+        <g class="scene" data-stage="elicit">
+          <ellipse cx="320" cy="412" rx="12" ry="16" fill="#8a5a3b" stroke="#5f3f28" stroke-width="1.5"/>
+          <path d="M314,404 Q320,399 326,404" stroke="#4a2f1c" stroke-width="1.8" fill="none"/>
+          <ellipse cx="315" cy="406" rx="3.5" ry="5.5" fill="#c99b6f" opacity=".65"/>
+          <g id="drops"></g>
+        </g>
+
+        <!-- 场景：align 破土生根（round-trip 抓土） -->
+        <g class="scene" data-stage="align">
+          <path d="M320,388 C320,396 319,404 320,412" stroke="#e6d5ae" stroke-width="2.5" fill="none" opacity=".85"/>
+          <path d="M320,393 C312,398 306,401 300,404" stroke="#e6d5ae" stroke-width="2" fill="none" opacity=".8"/>
+          <path d="M320,393 C328,398 334,401 340,404" stroke="#e6d5ae" stroke-width="2" fill="none" opacity=".8"/>
+          <path d="M320,387 C318,366 319,350 320,338" stroke="#6f9a4a" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+          <circle class="pulse" cx="320" cy="334" r="5" fill="#6f9a4a"/>
+          <ellipse cx="302" cy="346" rx="13" ry="6.5" fill="#7fae5e" transform="rotate(-26 302 346)"/>
+          <ellipse cx="338" cy="346" rx="13" ry="6.5" fill="#7fae5e" transform="rotate(26 338 346)"/>
+          <path d="M310,387 a10,6 0 0 0 20,0" fill="#8a5a3b" opacity=".85"/>
+        </g>
+
+        <!-- 场景：analyze 抽枝（每根枝条一个备选） -->
+        <g class="scene" data-stage="analyze">
+          <path d="M320,388 C319,406 321,420 320,430" stroke="#e6d5ae" stroke-width="2.5" fill="none" opacity=".85"/>
+          <path d="M320,396 C312,402 304,406 296,410" stroke="#e6d5ae" stroke-width="2" fill="none" opacity=".8"/>
+          <path d="M320,396 C328,402 336,406 344,410" stroke="#e6d5ae" stroke-width="2" fill="none" opacity=".8"/>
+          <path d="M320,400 C316,412 310,422 306,428" stroke="#e6d5ae" stroke-width="1.8" fill="none" opacity=".7"/>
+          <path d="M320,400 C324,412 330,422 334,428" stroke="#e6d5ae" stroke-width="1.8" fill="none" opacity=".7"/>
+          <path d="M320,387 C318,358 321,336 320,316" stroke="#5e8a3e" stroke-width="5" fill="none" stroke-linecap="round"/>
+          <ellipse cx="306" cy="358" rx="10" ry="4.5" fill="#7fae5e" transform="rotate(-28 306 358)"/>
+          <ellipse cx="334" cy="344" rx="10" ry="4.5" fill="#7fae5e" transform="rotate(28 334 344)"/>
+          <ellipse cx="308" cy="330" rx="9" ry="4" fill="#7fae5e" transform="rotate(-30 308 330)"/>
+          <path d="M320,318 C308,310 300,306 292,303" stroke="#5e8a3e" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+          <path d="M320,318 C332,310 340,306 348,303" stroke="#5e8a3e" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+          <path d="M320,316 C320,306 320,299 320,292" stroke="#5e8a3e" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+          <circle class="pulse" cx="290" cy="302" r="4.5" fill="#8fbf6a"/>
+          <circle class="pulse" cx="350" cy="302" r="4.5" fill="#8fbf6a" style="animation-delay:.8s"/>
+          <circle class="pulse" cx="320" cy="289" r="4.5" fill="#8fbf6a" style="animation-delay:1.6s"/>
+        </g>
+
+        <!-- 场景：embody 长干成形（原型即树冠） -->
+        <g class="scene" data-stage="embody">
+          <path d="M320,388 C319,410 321,426 320,438" stroke="#e6d5ae" stroke-width="3" fill="none" opacity=".85"/>
+          <path d="M320,398 C306,406 294,410 282,414" stroke="#e6d5ae" stroke-width="2.2" fill="none" opacity=".8"/>
+          <path d="M320,398 C334,406 346,410 358,414" stroke="#e6d5ae" stroke-width="2.2" fill="none" opacity=".8"/>
+          <path d="M320,404 C314,418 308,428 296,434" stroke="#e6d5ae" stroke-width="1.8" fill="none" opacity=".7"/>
+          <path d="M320,404 C326,418 332,428 344,434" stroke="#e6d5ae" stroke-width="1.8" fill="none" opacity=".7"/>
+          <path d="M320,420 C320,430 320,440 320,448" stroke="#e6d5ae" stroke-width="1.8" fill="none" opacity=".7"/>
+          <polygon points="312,386 313,312 327,312 328,386" fill="#7a5230"/>
+          <path d="M317,380 C316,356 318,336 317,320" stroke="#6d4529" stroke-width="1" fill="none" opacity=".5"/>
+          <path d="M316,314 C296,304 276,298 258,292" stroke="#7a5230" stroke-width="5" fill="none" stroke-linecap="round"/>
+          <path d="M324,314 C344,304 364,298 382,292" stroke="#7a5230" stroke-width="5" fill="none" stroke-linecap="round"/>
+          <path d="M320,312 C320,304 320,298 320,290" stroke="#7a5230" stroke-width="5" fill="none" stroke-linecap="round"/>
+          <g class="pulse">
+            <circle cx="320" cy="252" r="44" fill="#6aa84f" opacity=".9"/>
+            <circle cx="262" cy="276" r="33" fill="#6aa84f" opacity=".9"/>
+            <circle cx="378" cy="276" r="33" fill="#6aa84f" opacity=".9"/>
+            <circle cx="284" cy="238" r="27" fill="#6aa84f" opacity=".9"/>
+            <circle cx="356" cy="238" r="27" fill="#6aa84f" opacity=".9"/>
+          </g>
+        </g>
+
+        <!-- 场景：test 开花（测试集先绽放） -->
+        <g class="scene" data-stage="test">
+          <path d="M320,388 C319,412 321,430 320,444" stroke="#e6d5ae" stroke-width="3" fill="none" opacity=".85"/>
+          <path d="M320,398 C304,408 290,412 272,418" stroke="#e6d5ae" stroke-width="2.2" fill="none" opacity=".8"/>
+          <path d="M320,398 C336,408 350,412 368,418" stroke="#e6d5ae" stroke-width="2.2" fill="none" opacity=".8"/>
+          <path d="M320,412 C312,426 304,436 286,442" stroke="#e6d5ae" stroke-width="1.8" fill="none" opacity=".7"/>
+          <path d="M320,412 C328,426 336,436 354,442" stroke="#e6d5ae" stroke-width="1.8" fill="none" opacity=".7"/>
+          <path d="M320,424 C320,434 320,442 320,452" stroke="#e6d5ae" stroke-width="1.8" fill="none" opacity=".7"/>
+          <polygon points="310,386 312,298 328,298 330,386" fill="#7a5230"/>
+          <path d="M316,378 C315,350 317,324 316,306" stroke="#6d4529" stroke-width="1" fill="none" opacity=".5"/>
+          <path d="M314,300 C290,288 268,280 250,274" stroke="#7a5230" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+          <path d="M326,300 C350,288 372,280 390,274" stroke="#7a5230" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+          <path d="M320,298 C320,288 320,282 320,272" stroke="#7a5230" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+          <circle cx="320" cy="246" r="48" fill="#6aa84f" opacity=".92"/>
+          <circle cx="258" cy="272" r="38" fill="#6aa84f" opacity=".92"/>
+          <circle cx="382" cy="272" r="38" fill="#6aa84f" opacity=".92"/>
+          <circle cx="278" cy="232" r="30" fill="#6aa84f" opacity=".92"/>
+          <circle cx="362" cy="232" r="30" fill="#6aa84f" opacity=".92"/>
+          <circle cx="320" cy="286" r="34" fill="#6aa84f" opacity=".92"/>
+          <g class="pulse">
+            <circle cx="283" cy="252" r="5" fill="#f2a7c3"/>
+            <circle cx="300" cy="218" r="5" fill="#f2a7c3" style="animation-delay:.5s"/>
+            <circle cx="340" cy="214" r="5" fill="#f2a7c3" style="animation-delay:1s"/>
+            <circle cx="357" cy="248" r="5" fill="#f2a7c3" style="animation-delay:1.5s"/>
+            <circle cx="262" cy="264" r="5" fill="#f2a7c3" style="animation-delay:.3s"/>
+            <circle cx="378" cy="264" r="5" fill="#f2a7c3" style="animation-delay:1.2s"/>
+            <circle cx="304" cy="282" r="5" fill="#f2a7c3" style="animation-delay:.8s"/>
+            <circle cx="342" cy="278" r="5" fill="#f2a7c3" style="animation-delay:1.8s"/>
+          </g>
+        </g>
+
+        <!-- 场景：build 结果（果实即交付物） -->
+        <g class="scene" data-stage="build">
+          <path d="M320,388 C319,412 321,430 320,444" stroke="#e6d5ae" stroke-width="3" fill="none" opacity=".85"/>
+          <path d="M320,398 C304,408 290,412 272,418" stroke="#e6d5ae" stroke-width="2.2" fill="none" opacity=".8"/>
+          <path d="M320,398 C336,408 350,412 368,418" stroke="#e6d5ae" stroke-width="2.2" fill="none" opacity=".8"/>
+          <path d="M320,412 C312,426 304,436 286,442" stroke="#e6d5ae" stroke-width="1.8" fill="none" opacity=".7"/>
+          <path d="M320,412 C328,426 336,436 354,442" stroke="#e6d5ae" stroke-width="1.8" fill="none" opacity=".7"/>
+          <path d="M320,424 C320,434 320,442 320,452" stroke="#e6d5ae" stroke-width="1.8" fill="none" opacity=".7"/>
+          <polygon points="310,386 312,298 328,298 330,386" fill="#7a5230"/>
+          <path d="M316,378 C315,350 317,324 316,306" stroke="#6d4529" stroke-width="1" fill="none" opacity=".5"/>
+          <path d="M314,300 C290,288 268,280 250,274" stroke="#7a5230" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+          <path d="M326,300 C350,288 372,280 390,274" stroke="#7a5230" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+          <path d="M320,298 C320,288 320,282 320,272" stroke="#7a5230" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+          <circle cx="320" cy="246" r="48" fill="#6aa84f" opacity=".92"/>
+          <circle cx="258" cy="272" r="38" fill="#6aa84f" opacity=".92"/>
+          <circle cx="382" cy="272" r="38" fill="#6aa84f" opacity=".92"/>
+          <circle cx="278" cy="232" r="30" fill="#6aa84f" opacity=".92"/>
+          <circle cx="362" cy="232" r="30" fill="#6aa84f" opacity=".92"/>
+          <circle cx="320" cy="286" r="34" fill="#6aa84f" opacity=".92"/>
+          <g class="pulse">
+            <circle cx="296" cy="240" r="7" fill="#f2a7c3"/><circle cx="296" cy="240" r="2.5" fill="#fce4ef"/>
+            <circle cx="332" cy="230" r="7" fill="#f2a7c3"/><circle cx="332" cy="230" r="2.5" fill="#fce4ef"/>
+            <circle cx="362" cy="248" r="7" fill="#f2a7c3"/><circle cx="362" cy="248" r="2.5" fill="#fce4ef"/>
+            <circle cx="270" cy="262" r="7" fill="#f2a7c3"/><circle cx="270" cy="262" r="2.5" fill="#fce4ef"/>
+            <circle cx="350" cy="268" r="7" fill="#f2a7c3"/><circle cx="350" cy="268" r="2.5" fill="#fce4ef"/>
+            <circle cx="314" cy="262" r="7" fill="#f2a7c3"/><circle cx="314" cy="262" r="2.5" fill="#fce4ef"/>
+          </g>
+          <circle cx="283" cy="272" r="4" fill="#d9534f"/>
+          <circle cx="338" cy="258" r="4" fill="#d9534f"/>
+          <circle cx="370" cy="278" r="4" fill="#d9534f"/>
+        </g>
+
+        <!-- 场景：done 大树已成 -->
+        <g class="scene" data-stage="done">
+          <path d="M320,388 C319,416 321,438 320,456" stroke="#e6d5ae" stroke-width="3" fill="none" opacity=".85"/>
+          <path d="M320,398 C300,410 284,414 252,420" stroke="#e6d5ae" stroke-width="2.2" fill="none" opacity=".8"/>
+          <path d="M320,398 C340,410 356,414 388,420" stroke="#e6d5ae" stroke-width="2.2" fill="none" opacity=".8"/>
+          <path d="M320,412 C310,428 300,438 268,444" stroke="#e6d5ae" stroke-width="1.8" fill="none" opacity=".7"/>
+          <path d="M320,412 C330,428 340,438 372,444" stroke="#e6d5ae" stroke-width="1.8" fill="none" opacity=".7"/>
+          <path d="M320,428 C320,438 320,448 320,458" stroke="#e6d5ae" stroke-width="1.8" fill="none" opacity=".7"/>
+          <g class="sway">
+            <polygon points="308,386 311,290 329,290 332,386" fill="#7a5230"/>
+            <path d="M316,376 C315,344 317,316 316,300" stroke="#6d4529" stroke-width="1.2" fill="none" opacity=".5"/>
+            <path d="M320,352 C322,348 324,346 326,344" stroke="#6d4529" stroke-width="1" fill="none" opacity=".4"/>
+            <path d="M312,292 C282,278 256,268 238,260" stroke="#7a5230" stroke-width="6" fill="none" stroke-linecap="round"/>
+            <path d="M328,292 C358,278 384,268 402,260" stroke="#7a5230" stroke-width="6" fill="none" stroke-linecap="round"/>
+            <path d="M318,290 C306,274 296,266 286,258" stroke="#7a5230" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+            <path d="M322,290 C334,274 344,266 354,258" stroke="#7a5230" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+            <path d="M320,288 C320,278 320,270 320,262" stroke="#7a5230" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+            <circle cx="320" cy="240" r="52" fill="#6aa84f" opacity=".95"/>
+            <circle cx="260" cy="272" r="40" fill="#6aa84f" opacity=".95"/>
+            <circle cx="380" cy="272" r="40" fill="#6aa84f" opacity=".95"/>
+            <circle cx="270" cy="232" r="32" fill="#6aa84f" opacity=".95"/>
+            <circle cx="370" cy="232" r="32" fill="#6aa84f" opacity=".95"/>
+            <circle cx="300" cy="212" r="30" fill="#6aa84f" opacity=".95"/>
+            <circle cx="340" cy="212" r="30" fill="#6aa84f" opacity=".95"/>
+            <g>
+              <circle cx="282" cy="266" r="8.5" fill="#d9534f"/><circle cx="279.5" cy="263.5" r="2.5" fill="#ffab9e" opacity=".9"/>
+              <circle cx="312" cy="238" r="8.5" fill="#d9534f"/><circle cx="309.5" cy="235.5" r="2.5" fill="#ffab9e" opacity=".9"/>
+              <circle cx="346" cy="252" r="8.5" fill="#d9534f"/><circle cx="343.5" cy="249.5" r="2.5" fill="#ffab9e" opacity=".9"/>
+              <circle cx="380" cy="270" r="8.5" fill="#d9534f"/><circle cx="377.5" cy="267.5" r="2.5" fill="#ffab9e" opacity=".9"/>
+              <circle cx="268" cy="246" r="8.5" fill="#d9534f"/><circle cx="265.5" cy="243.5" r="2.5" fill="#ffab9e" opacity=".9"/>
+              <circle cx="336" cy="286" r="8.5" fill="#d9534f"/><circle cx="333.5" cy="283.5" r="2.5" fill="#ffab9e" opacity=".9"/>
+              <circle cx="296" cy="288" r="8.5" fill="#d9534f"/><circle cx="293.5" cy="285.5" r="2.5" fill="#ffab9e" opacity=".9"/>
+              <circle cx="360" cy="222" r="8.5" fill="#d9534f"/><circle cx="357.5" cy="219.5" r="2.5" fill="#ffab9e" opacity=".9"/>
+            </g>
+          </g>
+          <circle cx="534" cy="84" r="54" fill="#ffe9a8" opacity=".3"/>
+        </g>
+      </svg>
+    </div>
+    <div class="caption">
+      <div class="stage-title" id="stageTitle"></div>
+      <div class="stage-text" id="stageText"></div>
+      <div class="gate-hint" id="gateHint"></div>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="block">
+      <div class="block-title">操作台 —— 每个按钮都走真实的状态机转移表</div>
+      <div class="controls">
+        <button class="b-pass" id="btnPass">通过门禁</button>
+        <button class="b-fail" id="btnFail">模拟门禁失败</button>
+        <select id="rollbackSelect" aria-label="回退目标"></select>
+        <button class="b-back" id="btnRollback">回退</button>
+        <button class="b-abort" id="btnAbort">中止</button>
+        <button class="b-reset" id="btnReset">重置</button>
+        <div class="io-row">
+          <button class="io" id="btnImport">导入 state.json</button>
+          <button class="io" id="btnExport">导出 state.json</button>
+        </div>
+        <input type="file" id="importFile" accept=".json,application/json" hidden>
+      </div>
+    </div>
+    <div class="reasons" id="reasons"></div>
+    <div class="block">
+      <div class="block-title">history —— append-only，回退也只追加不删除</div>
+      <div id="timeline"></div>
+    </div>
+    <div class="block">
+      <div class="block-title">state.json —— 唯一权威状态</div>
+      <pre id="stateJson"></pre>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  <div class="f-line">生长映射 —— elicit 种子吸水（提问即浇水）· align 破土生根（round-trip 抓土）· analyze 抽枝（每根枝条一个备选）· embody 长干成形（原型即树冠）· test 开花（测试集先绽放）· build 结果（果实即交付物）· done 大树已成</div>
+  <div class="f-line">回退＝修剪回旧枝、年轮保留；中止＝落叶休眠、回退可恢复。字段与 @spec-engine/stage-machine/src/types.ts 一致，失败码与 src/gates.ts 一致；G2/G4 用户确认复用上游审批打断（D-08）。</div>
+</footer>
+
+<script>
+(function(){
+  'use strict';
+  var STAGE_LIST = ['elicit','align','analyze','embody','test','build'];
+  var NEXT = {elicit:'align',align:'analyze',analyze:'embody',embody:'test',test:'build',build:'done',done:null,aborted:null};
+  var ORDER = {elicit:0,align:1,analyze:2,embody:3,test:4,build:5,done:6,aborted:6};
+  var GATE = {elicit:'G1',align:'G2',analyze:'G3',embody:'G4',test:'G5',build:'G6'};
+
+  var CAPTIONS = {
+    elicit:{title:'第 1 阶段 · 苏格拉底提问 —— 种子吸水',
+      text:'种子在土里吸水，每个问题都是一滴水。G1 看的是：高成本槽位全部填充、每个默认值都已一次性告知用户。'},
+    align:{title:'第 2 阶段 · round-trip 对齐 —— 破土生根',
+      text:'芽要破土、根要抓土：六类漂移清零才算扎稳。G2 含用户显式确认——复用上游审批弹窗（D-08），漂移清单与 verdict/blocking 自检不符直接判失败。'},
+    analyze:{title:'第 3 阶段 · 分析 —— 抽枝',
+      text:'每根枝条是一个备选方案。G3 看的是：至少 2 个备选、每条证据都验证过可解析——证据是截断幻觉的绳子。'},
+    embody:{title:'第 4 阶段 · 体现 —— 长干成形',
+      text:'原型就是树冠的形状。G4 看的是：原型非空、「不做」清单非空、用户确认（审批弹窗）。'},
+    test:{title:'第 5 阶段 · 测试 —— 开花',
+      text:'测试集先开一遍，找准方向再动手。G5：可判定任务要测试存在且全绿；需判断任务要 rubric 至少 3 条、引用金标准样例、含 held-out 集。'},
+    build:{title:'第 6 阶段 · 施工 —— 结果',
+      text:'把果实挂上枝头：AI 拆计划、开子代理、记录传话。G6 看的是：计划项全部关闭、回归无退化。'},
+    done:{title:'大树已成',
+      text:'六道门禁全部通过，产物可验收。history 里每一段生长都可回放——这就是 append-only 的意义。'},
+    aborted:{title:'休眠',
+      text:'落叶只是暂停：全部检查点保留，回退到任意前序阶段即可恢复。'}
+  };
+
+  var FAILS = {
+    elicit:[['slots/high-cost-unfilled','槽位「goal」返工成本高且未填充']],
+    align:[['roundtrip/blocking-drift','missing：需求未体现周期性（原话「每周自动发一次」被吞掉）']],
+    analyze:[['plan/needs-two-alternatives','只有 1 个备选，至少需要 2 个']],
+    embody:[['embody/no-not-do-list','usage.md 缺「不做」清单']],
+    test:[['test/not-green','最近一次测试运行未全绿']],
+    build:[['build/plan-open','2 个计划项未关闭']]
+  };
+
+  var now = function(){ return new Date().toISOString(); };
+
+  function initial(t){
+    return {version:1,stage:'elicit',
+      history:[{stage:'elicit',entered_at:t,exited_at:null,gate_pass:null}],
+      open_questions:['验收标准还没定','部署环境还没确认'],checkpoint_seq:0};
+  }
+
+  function advance(state, gate, t){
+    if(NEXT[state.stage]===null)
+      return {ok:false,state:state,reasons:[{code:'advance/terminal',detail:'阶段 '+state.stage+' 是终态'}]};
+    if(gate.stage!==state.stage)
+      return {ok:false,state:state,reasons:[{code:'advance/wrong-stage',detail:'gate 属于 '+gate.stage+'，当前阶段是 '+state.stage}]};
+    if(!gate.pass) return {ok:false,state:state,reasons:gate.reasons};
+    var next = NEXT[state.stage];
+    var history = state.history.map(function(e,i){
+      return i===state.history.length-1 ? {stage:e.stage,entered_at:e.entered_at,exited_at:t,gate_pass:true} : e;
+    });
+    history.push({stage:next,entered_at:t,exited_at:null,gate_pass:null});
+    return {ok:true,state:{version:state.version,stage:next,history:history,
+      open_questions:state.open_questions,checkpoint_seq:state.checkpoint_seq+1}};
+  }
+
+  function rollback(state, target, t){
+    if(target!=='done' && target!=='aborted' && ORDER[target]<ORDER[state.stage]){
+      var history = state.history.map(function(e,i){
+        return i===state.history.length-1 ? {stage:e.stage,entered_at:e.entered_at,exited_at:t,gate_pass:false} : e;
+      });
+      history.push({stage:target,entered_at:t,exited_at:null,gate_pass:null});
+      return {ok:true,state:{version:state.version,stage:target,history:history,
+        open_questions:state.open_questions,checkpoint_seq:state.checkpoint_seq}};
+    }
+    return {ok:false,state:state,reasons:[{code:'rollback/invalid-target',detail:'不能回退到 '+target+'（当前 '+state.stage+'）'}]};
+  }
+
+  function abortStage(state, t){
+    if(state.stage==='aborted') return state;
+    var history = state.history.map(function(e,i){
+      return i===state.history.length-1 ? {stage:e.stage,entered_at:e.entered_at,exited_at:t,gate_pass:false} : e;
+    });
+    history.push({stage:'aborted',entered_at:t,exited_at:null,gate_pass:null});
+    return {version:state.version,stage:'aborted',history:history,
+      open_questions:state.open_questions,checkpoint_seq:state.checkpoint_seq};
+  }
+
+  var state = initial(now());
+  var $ = function(id){ return document.getElementById(id); };
+  function esc(s){ return String(s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+  function noteFail(reasons, title){
+    var box = $('reasons');
+    var items = reasons.map(function(r){
+      return '<li><code>'+esc(r.code)+'</code>'+esc(r.detail)+'</li>';
+    }).join('');
+    box.className = 'reasons show';
+    box.innerHTML = '<div class="r-title">'+title+'</div><ul>'+items+'</ul>';
+    $('sceneFrame').classList.add('blocked');
+  }
+  function noteInfo(msg){
+    var box = $('reasons');
+    box.className = 'reasons show info';
+    box.innerHTML = '<div class="r-title">'+msg+'</div>';
+    $('sceneFrame').classList.remove('blocked');
+  }
+  function noteClear(){
+    $('reasons').className = 'reasons';
+    $('reasons').innerHTML = '';
+    $('sceneFrame').classList.remove('blocked');
+  }
+
+  function renderDrops(){
+    var g = $('drops');
+    if(state.stage!=='elicit'){ g.innerHTML=''; return; }
+    var n = Math.min(Math.max(state.open_questions.length,2),6);
+    var startX = 320 - (n-1)*13;
+    var html = '';
+    for(var i=0;i<n;i++){
+      html += '<g transform="translate('+(startX+i*26)+',336)">'+
+        '<path class="drop" style="animation-delay:'+(i*0.4).toFixed(1)+'s" '+
+        'd="M0,-9 C4,-3 6,1 6,5 A6,6 0 1,1 -6,5 C-6,1 -4,-3 0,-9 Z" '+
+        'fill="#7fc4e8" opacity=".85"/></g>';
+    }
+    g.innerHTML = html;
+  }
+
+  function fmtT(iso){ return (iso||'').slice(11,19); }
+
+  function render(){
+    var displayStage = state.stage;
+    if(state.stage==='aborted'){
+      var rows = state.history;
+      displayStage = rows.length>1 ? rows[rows.length-2].stage : 'elicit';
+    }
+    var groups = document.querySelectorAll('.scene');
+    for(var k=0;k<groups.length;k++){
+      groups[k].classList.toggle('active', groups[k].getAttribute('data-stage')===displayStage);
+    }
+    $('treeScene').classList.toggle('grayed', state.stage==='aborted');
+    $('abortVeil').classList.toggle('show', state.stage==='aborted');
+
+    var gate = GATE[state.stage];
+    $('stageBadge').textContent = state.stage==='done' ? 'done · 终态（大树已成）'
+      : state.stage==='aborted' ? 'aborted · 休眠'
+      : '当前阶段 '+state.stage+' · 出口门禁 '+gate;
+
+    var cap = CAPTIONS[state.stage];
+    $('stageTitle').textContent = cap.title;
+    $('stageText').textContent = cap.text;
+    $('gateHint').textContent = gate
+      ? '门禁 '+gate+' 通过 → 完成这一段生长，进入下一阶段；不通过 → 停在原地，给出结构化缺失项。'
+      : '终态不可 advance；可回退或重置。';
+
+    $('btnPass').textContent = gate ? '通过门禁 '+gate : '终态';
+    var terminal = !gate;
+    $('btnPass').disabled = terminal;
+    $('btnFail').disabled = terminal;
+    $('btnAbort').disabled = (state.stage==='aborted');
+
+    var opts = STAGE_LIST.filter(function(st){ return ORDER[st]<ORDER[state.stage]; });
+    var sel = $('rollbackSelect');
+    sel.innerHTML = opts.length ? opts.map(function(o){ return '<option value="'+o+'">'+o+'</option>'; }).join('')
+      : '<option value="">—</option>';
+    sel.disabled = !opts.length;
+    $('btnRollback').disabled = !opts.length;
+
+    var tl = state.history.map(function(row,i){
+      var mark = row.gate_pass===true?'✓':(row.gate_pass===false?'✗':'●');
+      var cls = row.gate_pass===true?'ok':(row.gate_pass===false?'bad':'live');
+      var label = row.stage==='aborted' ? '中止' : row.stage==='done' ? 'done' : row.stage+' · 出口 '+(GATE[row.stage]||'—');
+      return '<div class="tl-row"><span class="tl-i">#'+i+'</span><span class="tl-stage">'+esc(label)+
+        '</span><span class="tl-mark '+cls+'">'+mark+'</span><span class="tl-t">'+esc(fmtT(row.exited_at||row.entered_at))+'</span></div>';
+    }).join('');
+    $('timeline').innerHTML = tl;
+    $('stateJson').textContent = JSON.stringify(state,null,2);
+    renderDrops();
+  }
+
+  $('btnPass').addEventListener('click', function(){
+    var g = {stage:state.stage, pass:true, reasons:[]};
+    var r = advance(state, g, now());
+    if(r.ok){
+      state = r.state;
+      noteInfo('门禁 '+GATE[r.state.history[r.state.history.length-2].stage]+' 通过 —— 生长进入 '+state.stage+'（checkpoint_seq='+state.checkpoint_seq+'）');
+    } else { noteFail(r.reasons,'转移被拒'); }
+    render();
+  });
+
+  $('btnFail').addEventListener('click', function(){
+    var pair = FAILS[state.stage][0];
+    var r = advance(state, {stage:state.stage,pass:false,reasons:[{code:pair[0],detail:pair[1]}]}, now());
+    noteFail(r.reasons, '门禁 '+GATE[state.stage]+' 未通过 —— 生长停在 '+state.stage+'，state 不变');
+    render();
+  });
+
+  $('btnRollback').addEventListener('click', function(){
+    var target = $('rollbackSelect').value;
+    var r = rollback(state, target, now());
+    if(r.ok){
+      state = r.state;
+      noteInfo('已回退到 '+target+' —— history 追加一行，旧检查点全部保留');
+    } else { noteFail(r.reasons,'回退被拒'); }
+    render();
+  });
+
+  $('btnAbort').addEventListener('click', function(){
+    state = abortStage(state, now());
+    noteInfo('已中止：树休眠，回退到任意前序阶段可恢复');
+    render();
+  });
+
+  $('btnReset').addEventListener('click', function(){
+    state = initial(now());
+    noteClear();
+    render();
+  });
+
+  $('btnImport').addEventListener('click', function(){ $('importFile').click(); });
+  $('importFile').addEventListener('change', function(ev){
+    var f = ev.target.files && ev.target.files[0];
+    if(!f) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      try{
+        var o = JSON.parse(reader.result);
+        var allStages = STAGE_LIST.concat(['done','aborted']);
+        if(o.version!==1 || allStages.indexOf(o.stage)<0 || !Array.isArray(o.history))
+          throw new Error('字段校验失败');
+        state = o;
+        noteInfo('已导入 state.json —— 按导入的 history 回放生长');
+        render();
+      }catch(e){
+        noteFail([{code:'state/invalid',detail:'不是合法的 state.json：'+e.message}],'导入失败');
+      }
+      ev.target.value = '';
+    };
+    reader.readAsText(f);
+  });
+
+  $('btnExport').addEventListener('click', function(){
+    var blob = new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'state.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(a.href);
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
