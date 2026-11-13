@@ -261,7 +261,7 @@ G2 会对 `verdict` 与 `blocking` 做自检：与漂移清单不一致直接判
 
 ## 7. 失败与降级
 
-| 情形 | 处理 |
+| 情况 | 处理 |
 |---|---|
 | 门禁不通过 | 返回缺失项，停留在当前阶段，不静默跳过 |
 | 用户中止 | 写 `aborted`，保留全部检查点，可回退恢复 |
@@ -276,7 +276,7 @@ G2 会对 `verdict` 与 `blocking` 做自检：与漂移清单不一致直接判
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | M0 | 环境验证 | **部分完成**：发布包 `@deepseek-ai/dsh@0.2.2-rc.2` 在 Node v22.23.2 上可启动，Web UI 验证 HTTP 200（npm 仅警告 engines，未阻塞）。**源码构建路径未验证**：仍需 Node ≥ 24.9 + pnpm 11.28.5，待装环境后跑通 `pnpm install && pnpm run build` |
-| M1 | `stage-machine` + `contract-tools` | **进行中**：`@spec-engine/stage-machine` 纯核与 vitest 测试已落库（**尚未编译运行**）；像素 mini 生长树（嵌入式，D-07 v0.1.4 修订）已产出并注入运行中的 Web UI 实测通过（`spec-engine/viz/pixel-tree.user.js`，commit `1c0c5e6`）；contract-tools 的设计输入已齐——D-08 锁定用户确认通道（复用上游审批打断），OpenAI 兼容端点可配性尚未回报，待编码 |
+| M1 | `stage-machine` + `contract-tools` | **进行中**：`@spec-engine/stage-machine` 纯核与 vitest 测试已落库（**尚未编译运行**）；像素 mini 生长树（嵌入式，D-07 v0.1.4 修订）已产出并注入运行中的 Web UI 实测通过（`spec-engine/viz/pixel-tree.user.js` v0.2 动画版，commit `4fca66f`）；contract-tools 的设计输入已齐——D-08 锁定用户确认通道（复用上游审批打断），OpenAI 兼容端点可配性尚未回报，待编码 |
 | M2 | round-trip：独立上下文反推 + 六类漂移判定 | 未开始 |
 | M3 | preset 组装，端到端跑通一个真实小任务 | 未开始 |
 | M4 | 评测：10 个案例，量化漂移率与返工率 | 未开始 |
