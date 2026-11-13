@@ -1,6 +1,6 @@
 # Spec Engine 架构
 
-版本 v0.1.1。本文定义数据模型、阶段机、对齐协议与上游扩展点映射。凡本文未定义的字段，一律不进入 `state.json`。
+版本 v0.1.2。本文定义数据模型、阶段机、对齐协议与上游扩展点映射。凡本文未定义的字段，一律不进入 `state.json`。
 
 ---
 
@@ -13,6 +13,7 @@
 | D-03 | 结构化状态（JSON）是唯一权威，Markdown 是渲染结果 | 门禁必须可机器判定，人读格式不能当真相 |
 | D-04 | 反向还原阶段必须使用**独立上下文** | 同一上下文里做反推是同义反复，校验不成立 |
 | D-05 | 本层包命名空间为 **`@spec-engine/*`**，不混用 `@deepseek-ai/*` | fork 内混用上游命名空间，会分不清哪行代码属于谁；独立命名空间也便于将来独立发布 |
+| D-06 | 门禁纯函数只接**解析后的事实**，不读文件、不调模型 | 文件读取、解析与 `evidence_verified` / `user_confirmed` 的背书归 contract-tools；纯核零依赖、可穷举测试；G2 的 verdict/blocking 自检只有在纯函数里才可能成立 |
 
 ---
 
@@ -62,7 +63,7 @@
 ```
 
 `stage` 取值：`elicit | align | analyze | embody | test | build | done | aborted`。
-该字段**只能由 stage-machine 服务写入**，模型无写权限。
+该字段**只能由 stage-machine 服务写入**，模型无写权限。`gate_pass` 为 true 表示经门禁退出，false 表示经回退或中止退出，null 表示该行仍活跃。
 
 ### 2.3 `slots.json`
 
@@ -71,7 +72,7 @@
 ```json
 {
   "goal": { "value": "...", "source": "user", "rework_cost": "high", "filled": true },
-  "audience": { "value": "...", "source": "default", "rework_cost": "low", "filled": true },
+  "audience": { "value": "...", "source": "default", "rework_cost": "low", "filled": true, "disclosed": true },
   "success_criteria": [ { "value": "...", "source": "user", "rework_cost": "high" } ],
   "boundaries": [ { "value": "不做 X", "source": "user", "rework_cost": "high" } ],
   "resources": [],
@@ -80,7 +81,7 @@
 }
 ```
 
-`source` 取 `user | default | inferred`。`rework_cost` 取 `high | low`，决定该槽位是否阻塞门禁。
+`source` 取 `user | default | inferred`。`rework_cost` 取 `high | low`，决定该槽位是否阻塞门禁。`disclosed` 为 true 表示该默认值已一次性告知用户，G1 对所有 `default` 来源的槽位检查此位。
 
 ### 2.4 `requirements.json`
 
@@ -128,14 +129,14 @@
 | test | build | G5 |
 | build | done | G6 |
 
-任意阶段可回退到前序阶段；回退时写 `history`，不删旧检查点。任意阶段可由用户中止（`aborted`）。
+任意阶段可回退到前序阶段；回退时写 `history`，不删旧检查点。任意阶段可由用户中止（`aborted`），中止后仍可回退恢复。终态（`done` / `aborted`）不可 advance。
 
 ### 3.2 门禁定义
 
 | 门禁 | 判定（全部为机器可检查） |
 |---|---|
-| G1 | `slots` 中所有 `rework_cost=high` 的槽位 `filled=true`；每个 `default` 来源的槽位至少有一次性告知记录 |
-| G2 | `roundtrip.verdict == pass` 且 `blocking == 0`；每条 `distorted` 已有用户裁决；用户显式确认事件存在 |
+| G1 | `slots` 中所有 `rework_cost=high` 的槽位 `filled=true`；每个 `default` 来源的槽位 `disclosed=true` |
+| G2 | `roundtrip.verdict == pass` 且 `blocking == 0`；每条非阻塞漂移已有用户裁决；`verdict`/`blocking` 与漂移清单一致（自检）；用户显式确认事件存在 |
 | G3 | `plan.md` 含 ≥2 个备选；每个备选有 `evidence` 字段，指向真实存在的文件路径或已记录的工具调用 |
 | G4 | `prototype/` 非空；`usage.md` 的「不做」清单非空；用户显式确认事件存在 |
 | G5 | 可判定任务：测试文件存在且最近一次运行全绿；需判断任务：`rubric.json` ≥3 条且引用金标准样例，`held_out=true` |
@@ -148,8 +149,9 @@
 - gate 是**纯函数**：`evaluate(stage, artifacts) -> { pass, reasons[] }`，不调模型。
 - 工具 `stage.advance` 在调用时先跑 gate；不通过则返回结构化拒绝，附缺失项清单。模型拿不到「假成功」。
 - 额外挂 `agent/pre-step`：当 `stage` 未通过而模型试图执行下一阶段的动作时，注入阻断或纠正，而不是让它裸跑。
+- 门禁只吃事实，不吃文件（D-06）：文件读取、解析、`evidence_verified` / `user_confirmed` 的背书全部由 contract-tools 完成，纯核因此零依赖、可穷举测试。
 
-这三条合起来才是「模型只能提议」。只靠提示词约束，阶段必然会漂。
+这四条合起来才是「模型只能提议」。只靠提示词约束，阶段必然会漂。
 
 ---
 
@@ -193,6 +195,8 @@ T2 的隔离是协议的一部分，不是优化项。同一上下文里做反�
 }
 ```
 
+G2 会对 `verdict` 与 `blocking` 做自检：与漂移清单不一致直接判失败，生产端写坏无法藏住。
+
 ### 4.4 人读的验收方式
 
 校验通过后，**先给用户看 `restatement.md`，再给看 `spec.md`**。原因是人对「别人怎么理解我」的敏感度，远高于对「规格写得对不对」的判断力。这是最低成本的对齐验收。
@@ -224,7 +228,7 @@ T2 的隔离是协议的一部分，不是优化项。同一上下文里做反�
 
 | 本层需求 | 上游扩展点 | 本层动作 |
 |---|---|---|
-| 状态机与门禁 | tool 定义 + `agent/pre-step` | 新增 `stage-machine` + `contract-tools` |
+| 状态机与门禁 | tool 定义 + `agent/pre-step` | 新增 `@spec-engine/stage-machine`（纯核，零依赖）+ `@spec-engine/contract-tools`（注册、IO、背书） |
 | 上下文压缩 | `ctx.compaction` seam | 只配置阈值与保留策略 |
 | 大输出旁路 | `ctx.spill` | 只配置 |
 | 计划 | `packages/plan` | 直接复用 |
@@ -257,7 +261,7 @@ T2 的隔离是协议的一部分，不是优化项。同一上下文里做反�
 | 情形 | 处理 |
 |---|---|
 | 门禁不通过 | 返回缺失项，停留在当前阶段，不静默跳过 |
-| 用户中止 | 写 `aborted`，保留全部检查点，可恢复 |
+| 用户中止 | 写 `aborted`，保留全部检查点，可回退恢复 |
 | 上下文溢出 | 走上游 overflow 恢复：剪枝 → 压缩 → 重试 |
 | 反向还原连续失败 3 次 | 判定为「需求本身不可规格化」，转人工介入，不再重试 |
 | 用户推翻已确认规格 | 回退到 `align`，旧检查点保留为历史 |
@@ -268,8 +272,8 @@ T2 的隔离是协议的一部分，不是优化项。同一上下文里做反�
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
-| M0 | 环境验证 | **已完成（部分）**：发布包 `@deepseek-ai/dsh@0.2.2-rc.2` 在 Node v22.23.2 上可启动，Web UI 验证 HTTP 200（npm 仅警告 engines，未阻塞）。**源码构建路径未验证**：仍需 Node ≥ 24.9 + pnpm 11.28.5，待装环境后跑通 `pnpm dsh --profile headless` |
-| M1 | `stage-machine` + `contract-tools`：状态机、6 个 gate 纯函数、`slots` / `spec` / `advance` 三个工具 | 未开始 |
+| M0 | 环境验证 | **部分完成**：发布包 `@deepseek-ai/dsh@0.2.2-rc.2` 在 Node v22.23.2 上可启动，Web UI 验证 HTTP 200（npm 仅警告 engines，未阻塞）。**源码构建路径未验证**：仍需 Node ≥ 24.9 + pnpm 11.28.5，待装环境后跑通 `pnpm install && pnpm run build` |
+| M1 | `stage-machine` + `contract-tools` | **进行中**：`@spec-engine/stage-machine` 纯核（契约类型、转移表、G1–G6、写时复制 advance/rollback/abort）与 vitest 测试已落库，**尚未编译运行**；`contract-tools`（slots/spec/advance 三个工具、注册与 `agent/pre-step` 挂载）待上游手感确认后开发 |
 | M2 | round-trip：独立上下文反推 + 六类漂移判定 | 未开始 |
 | M3 | preset 组装，端到端跑通一个真实小任务 | 未开始 |
 | M4 | 评测：10 个案例，量化漂移率与返工率 | 未开始 |
@@ -293,3 +297,5 @@ T2 的隔离是协议的一部分，不是优化项。同一上下文里做反�
 - 快通道的判据：什么规模的任务允许跳过阶段 1–3。
 - 是否引入 DSPy 级优化器（v2，前提是 M4 的评测集稳定）。
 - M0 收尾：Node 24 + pnpm 安装后，验证源码构建路径（`pnpm install && pnpm run build`）与 headless 任务（需 API key，key 只进环境变量，不进仓库与对话）。
+- `plan.md` 的结构化解析约定：M1 纯核只接解析结果（`PlanAlternative[]`），解析器规格 v0.2 定。
+- 上游仓库闸门对本包的适配项：README frontmatter、`README.i18n.yaml`、根 tsconfig paths 注册、包目录（`gen-plugin-packages`）登记；doc-sync / hygiene 未跑过，环境就绪后处理。
