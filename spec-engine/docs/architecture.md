@@ -1,6 +1,6 @@
 # Spec Engine 架构
 
-版本 v0.1.2。本文定义数据模型、阶段机、对齐协议与上游扩展点映射。凡本文未定义的字段，一律不进入 `state.json`。
+版本 v0.1.3。本文定义数据模型、阶段机、对齐协议与上游扩展点映射。凡本文未定义的字段，一律不进入 `state.json`。
 
 ---
 
@@ -14,6 +14,8 @@
 | D-04 | 反向还原阶段必须使用**独立上下文** | 同一上下文里做反推是同义反复，校验不成立 |
 | D-05 | 本层包命名空间为 **`@spec-engine/*`**，不混用 `@deepseek-ai/*` | fork 内混用上游命名空间，会分不清哪行代码属于谁；独立命名空间也便于将来独立发布 |
 | D-06 | 门禁纯函数只接**解析后的事实**，不读文件、不调模型 | 文件读取、解析与 `evidence_verified` / `user_confirmed` 的背书归 contract-tools；纯核零依赖、可穷举测试；G2 的 verdict/blocking 自检只有在纯函数里才可能成立 |
+| D-07 | 阶段进度的展示形态为**生长树**：门禁通过即完成一段生长，从发芽到大树；数据源就是 `state.json` 的 append-only history（v1 原型：`spec-engine/viz/tree.html`） | 用户 Web UI 上手后的产品形态反馈；可视化不引入第二个真相源——history 本就逐行记录每次进出与回退，天然可回放成「生长」叙事；回退＝年轮保留，中止＝休眠可恢复，语义与状态机逐点对齐 |
+| D-08 | G2/G4 的「用户显式确认」**复用上游审批打断**：审批通过即持久化为 `user_confirmed` 事件 | 用户已确认审批弹窗的打断方式可接受（Web UI 上手反馈）；不另造确认通道，交互成本最低；审批事件留痕，满足「持久化事件，不是模型自述」的检查要求 |
 
 ---
 
@@ -142,7 +144,7 @@
 | G5 | 可判定任务：测试文件存在且最近一次运行全绿；需判断任务：`rubric.json` ≥3 条且引用金标准样例，`held_out=true` |
 | G6 | 所有计划项关闭；回归无退化 |
 
-「用户显式确认」是一个持久化事件，不是模型自述，所以仍属可检查范围。
+「用户显式确认」是一个持久化事件，不是模型自述，所以仍属可检查范围；实现上复用上游审批打断，审批通过即持久化为 `user_confirmed`（D-08）。
 
 ### 3.3 执行机制
 
@@ -237,6 +239,7 @@ G2 会对 `verdict` 与 `blocking` 做自检：与漂移清单不一致直接判
 | 阶段提示词 | `packages/skill` | 每阶段一个 skill |
 | 组装 | `agent-preset` 声明式 YAML | `spec-engine` preset |
 | 模型接入 | `packages/llm` provider 抽象 | 用既有 OpenAI 兼容端点配置 |
+| 阶段进度可视化 | 独立产物（不依赖上游） | 生长树 v1：`spec-engine/viz/tree.html`，直接消费 `state.json` 的 history 渲染（D-07） |
 
 上游 preset 的声明形态（节选自 `agent-preset` 文档）：
 
@@ -273,7 +276,7 @@ G2 会对 `verdict` 与 `blocking` 做自检：与漂移清单不一致直接判
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | M0 | 环境验证 | **部分完成**：发布包 `@deepseek-ai/dsh@0.2.2-rc.2` 在 Node v22.23.2 上可启动，Web UI 验证 HTTP 200（npm 仅警告 engines，未阻塞）。**源码构建路径未验证**：仍需 Node ≥ 24.9 + pnpm 11.28.5，待装环境后跑通 `pnpm install && pnpm run build` |
-| M1 | `stage-machine` + `contract-tools` | **进行中**：`@spec-engine/stage-machine` 纯核（契约类型、转移表、G1–G6、写时复制 advance/rollback/abort）与 vitest 测试已落库，**尚未编译运行**；`contract-tools`（slots/spec/advance 三个工具、注册与 `agent/pre-step` 挂载）待上游手感确认后开发 |
+| M1 | `stage-machine` + `contract-tools` | **进行中**：`@spec-engine/stage-machine` 纯核与 vitest 测试已落库（**尚未编译运行**）；生长树可视化原型（体现层）已产出，commit `6ac9fd3`；contract-tools 的设计输入已齐——D-08 锁定用户确认通道（复用上游审批打断），OpenAI 兼容端点可配性尚未回报，待编码 |
 | M2 | round-trip：独立上下文反推 + 六类漂移判定 | 未开始 |
 | M3 | preset 组装，端到端跑通一个真实小任务 | 未开始 |
 | M4 | 评测：10 个案例，量化漂移率与返工率 | 未开始 |
@@ -299,3 +302,5 @@ G2 会对 `verdict` 与 `blocking` 做自检：与漂移清单不一致直接判
 - M0 收尾：Node 24 + pnpm 安装后，验证源码构建路径（`pnpm install && pnpm run build`）与 headless 任务（需 API key，key 只进环境变量，不进仓库与对话）。
 - `plan.md` 的结构化解析约定：M1 纯核只接解析结果（`PlanAlternative[]`），解析器规格 v0.2 定。
 - 上游仓库闸门对本包的适配项：README frontmatter、`README.i18n.yaml`、根 tsconfig paths 注册、包目录（`gen-plugin-packages`）登记；doc-sync / hygiene 未跑过，环境就绪后处理。
+- Web UI 上手三问的回收情况：② 展示形态→生长树（D-07 已落地）；③ 审批打断复用→已确认（D-08）；**① OpenAI 兼容端点能否配入上游「设置→模型」——尚未回报**。①不阻塞 contract-tools 编码（模型配置属 preset/运行时配置），但 M3 端到端前必须有答案。
+- 生长树 v1 是独立 HTML（消费 `state.json`）；接入上游 Web UI 的方式（面板/独立页）v0.2 再议。
