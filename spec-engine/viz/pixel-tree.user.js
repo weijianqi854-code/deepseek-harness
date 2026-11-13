@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         spec-engine 像素生长树
 // @namespace    spec-engine
-// @version      0.2.0
-// @description  DSH Web UI 聊天区旁的像素 mini 生长树：随 spec-engine 六阶段进度生长（elicit→align→analyze→embody→test→build→done，aborted=休眠）；逐帧摇摆 + 粒子层（雨滴/花瓣/落叶/星芒/休眠Z）
+// @version      0.2.1
+// @description  DSH Web UI 像素 mini 生长树：透明底色、无卡片框，直接融进页面同一视觉层；随 spec-engine 六阶段进度生长（elicit→align→analyze→embody→test→build→done，aborted=休眠）；逐帧摇摆 + 粒子层
 // @match        http://127.0.0.1:3080/*
 // @match        http://localhost:3080/*
 // @run-at       document-idle
@@ -15,6 +15,8 @@
 //      —— @spec-engine/contract-tools（M1 后半）将实现这一侧。
 //   2. 以上不存在时进入 demo 模式（点击树推进阶段），标签带 demo 角标。
 //
+// v0.2.1 透明底色：面板去卡片化（无底色/边框/阴影），画布 clearRect 不铺天空色，
+//        树体/土壤/云/月/粒子直接画在页面背景上；hover 才显虚线框与关闭键。
 // v0.2 动画：650ms 两帧树冠摇摆 + 130ms 粒子层；prefers-reduced-motion 冻结为静态帧。
 // 根系随阶段加深（=检查点沉淀）；aborted 根系保留（=可回退恢复）。
 // 重注入安全：再次执行本脚本会先 dispose 旧实例（window.__specEngineTree.dispose）。
@@ -34,20 +36,16 @@
     r: '#d8c8a8',                                                  // 根
     G: '#7a5230', d: '#5e3b1e',                                    // 干/枯枝
     n: '#bfe089',                                                  // 新芽
-    L: '#8fd06a', B: '#5ea34a', k: '#3f7d2f', h: '#c9f29b',        // 叶四阶
+    L: '#8fd06a', B: '#5ea34a', k: '#3f7d2f', h: '#a4e07c',        // 叶四阶（h 兼作粒子，透明底加深）
     F: '#f2a7c3',                                                  // 花
     R: '#d9534f', q: '#ffe9c9',                                    // 果 / 高光闪
     W: '#7fc4e8', w: '#b9e2f4', E: '#c99b6f',                      // 水 / 种
-    c: '#8f9c8f', o: '#c9d4e0',                                    // 云 / 月
+    c: '#8f9c8f', o: '#a9b6c6',                                    // 云 / 月（透明底：月加深可读）
     m: '#9aa08a',                                                  // 休眠残叶
-    x: '#f0f7d8', z: '#c9d4c0'                                     // 星芒 / 睡Z
+    x: '#d9b64a', z: '#7c8a7c'                                     // 星芒 / 睡Z（浅色页面底可读）
   };
 
-  // ---- 每阶段天空底色（深色微调，勿抢戏） ----
-  var SKY = {
-    elicit: '#2a333c', align: '#2b3428', analyze: '#2a3328', embody: '#293021',
-    test: '#2b3222', build: '#2d3222', done: '#313422', aborted: '#282b30'
-  };
+  // v0.2.1 起无天空底色：画布透明，页面背景即天空。
 
   // ---- 场景帧：19 行天空区（行0-18），土壤区(行19-23)由 SOIL+ROOTS 合成 ----
   var FR = {
@@ -284,15 +282,15 @@
   box.id = 'spec-engine-tree';
   box.style.cssText = [
     'position:fixed', 'z-index:2147483000', 'right:16px', 'bottom:110px',
-    'background:#20261acc', 'border:2px solid #3a4a2f', 'border-radius:4px',
-    'padding:5px 5px 3px', 'font:10px/1.4 Consolas,monospace', 'color:#d8e3c8',
+    'background:transparent', 'border:none', 'border-radius:4px',
+    'padding:0', 'font:10px/1.4 Consolas,monospace', 'color:#3f4a36',
     'user-select:none', 'cursor:grab', 'touch-action:none',
-    'box-shadow:0 2px 0 #00000055'
+    'text-shadow:0 0 3px #ffffffd9, 0 1px 2px #ffffffb3'
   ].join(';');
 
   var canvas = document.createElement('canvas');
   canvas.width = 16; canvas.height = 24;
-  canvas.style.cssText = 'width:64px;height:96px;display:block;image-rendering:pixelated;border-radius:2px';
+  canvas.style.cssText = 'width:64px;height:96px;display:block;image-rendering:pixelated';
   var ctx = canvas.getContext('2d');
 
   var bar = document.createElement('div');
@@ -307,7 +305,8 @@
   var close = document.createElement('span');
   close.textContent = '\u00d7';
   close.title = '隐藏像素树（清 localStorage 的 spec-engine-tree-off 可找回）';
-  close.style.cssText = 'flex:none;margin-left:auto;cursor:pointer;opacity:.6;padding:0 2px';
+  close.className = 'se-close';
+  close.style.cssText = 'flex:none;margin-left:auto;cursor:pointer;opacity:0;padding:0 2px;transition:opacity .15s';
 
   var toast = document.createElement('div');
   toast.style.cssText = 'display:none;position:absolute;left:50%;transform:translateX(-50%);bottom:100%;' +
@@ -322,6 +321,8 @@
     '#spec-engine-tree .dormant{filter:grayscale(.85) opacity(.85)}',
     '#spec-engine-tree .pop{animation:se-pop .35s steps(3,end)}',
     '@keyframes se-pop{0%{transform:scale(.55)}100%{transform:scale(1)}}',
+    '#spec-engine-tree:hover{outline:1px dashed #6a7a5f99;outline-offset:3px}',
+    '#spec-engine-tree:hover .se-close{opacity:.85}',
     '@media (prefers-reduced-motion:reduce){#spec-engine-tree .pop{animation:none}}'
   ].join('\n');
   document.head.appendChild(style);
@@ -395,8 +396,7 @@
   // ---- 渲染 ----
   function drawAll() {
     var stage = currentStage();
-    ctx.fillStyle = SKY[stage] || '#20261a';
-    ctx.fillRect(0, 0, 16, 24);
+    ctx.clearRect(0, 0, 16, 24);   // 透明底：页面背景即天空
 
     var rows = FR[stage] || FR.elicit;
     var sw = (!RM && frameIdx === 1 && SWAY[stage]) ? SWAY[stage] : null;
